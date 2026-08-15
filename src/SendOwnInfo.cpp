@@ -138,7 +138,7 @@ OwnInfo prepareAndSendOwnInfo(
   out.lat_proper = s_lat;
   out.lon_proper = s_lon;
 
-  // Build payload (you can change formatting as you like)
+  // Build payload
   if (out.hasFix) {
     char buf[96];
     snprintf(
