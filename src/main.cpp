@@ -161,6 +161,115 @@ void sendUBX_CFG_MSG(uint8_t targetMsgClass, uint8_t targetMsgId, uint8_t rateUA
   sendUBX(msg, sizeof(msg));
 }
 
+
+
+// Call this repeatedly from loop(): readAndPrintLatLonFromUbx();
+
+static int32_t readI32LE(const uint8_t *p) {
+  return (int32_t)(
+      ((uint32_t)p[0]) |
+      ((uint32_t)p[1] << 8) |
+      ((uint32_t)p[2] << 16) |
+      ((uint32_t)p[3] << 24)
+  );
+}
+
+void readAndPrintLatLonFromUbx()
+{
+  // UBX parser state
+  static uint8_t state = 0;
+  static uint8_t cls = 0, id = 0;
+  static uint16_t len = 0;
+  static uint16_t payloadIdx = 0;
+  static uint8_t payload[92]; // NAV-PVT payload length is 92 bytes
+  static uint8_t ckA = 0, ckB = 0;
+  static uint8_t rxCkA = 0, rxCkB = 0;
+
+  while (GPSSerial.available()) {
+    uint8_t b = (uint8_t)GPSSerial.read();
+
+    switch (state) {
+      case 0: // sync 1
+        if (b == 0xB5) state = 1;
+        break;
+
+      case 1: // sync 2
+        if (b == 0x62) state = 2;
+        else state = 0;
+        break;
+
+      case 2: // class
+        cls = b;
+        ckA = 0; ckB = 0;
+        ckA += b; ckB += ckA;
+        state = 3;
+        break;
+
+      case 3: // id
+        id = b;
+        ckA += b; ckB += ckA;
+        state = 4;
+        break;
+
+      case 4: // len LSB
+        len = b;
+        ckA += b; ckB += ckA;
+        state = 5;
+        break;
+
+      case 5: // len MSB
+        len |= ((uint16_t)b << 8);
+        ckA += b; ckB += ckA;
+
+        // Basic sanity: avoid huge frames
+        if (len > sizeof(payload)) {
+          state = 0;
+          break;
+        }
+
+        payloadIdx = 0;
+        state = (len == 0) ? 7 : 6;
+        break;
+
+      case 6: // payload
+        payload[payloadIdx++] = b;
+        ckA += b; ckB += ckA;
+
+        if (payloadIdx >= len) state = 7;
+        break;
+
+      case 7: // checksum A
+        rxCkA = b;
+        state = 8;
+        break;
+
+      case 8: // checksum B
+        rxCkB = b;
+
+        // Validate checksum
+        if (rxCkA == ckA && rxCkB == ckB) {
+          // If NAV-PVT, extract lon/lat
+          if (cls == 0x01 && id == 0x07 && len >= 32) {
+            int32_t lon_e7 = readI32LE(&payload[24]);
+            int32_t lat_e7 = readI32LE(&payload[28]);
+
+            double lon = lon_e7 / 1e7;
+            double lat = lat_e7 / 1e7;
+
+            Serial.print("LAT=");
+            Serial.print(lat, 7);
+            Serial.print(" LON=");
+            Serial.println(lon, 7);
+          }
+        }
+        // Restart for next frame
+        state = 0;
+        break;
+    }
+  }
+}
+
+
 // ---------- minimal test ----------
 void setup()
 {
@@ -273,6 +382,5 @@ while (GPSSerial.available()) {
 }
 }
 void loop() {
-  while (GPSSerial.available()) Serial.write(GPSSerial.read());
-  while (Serial.available()) GPSSerial.write(Serial.read());
+  readAndPrintLatLonFromUbx();
 }
