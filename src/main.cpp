@@ -16,31 +16,6 @@ static const int GPS_TX_PIN = 12;   // GPS RX -> MCU TX
 
 #define USB_BAUD  115200
 
-// ---------- helpers ----------
-void flushGpsInput(uint32_t ms)
-{
-  uint32_t start = millis();
-  while (millis() - start < ms) {
-    while (GPSSerial.available()) (void)GPSSerial.read();
-    delay(1);
-  }
-}
-
-void sendUBX(const uint8_t* msg, uint16_t len)
-{
-  GPSSerial.write(msg, len);
-  GPSSerial.flush(); // ensure bytes are pushed out (ok on ESP32)
-}
-
-// UBX checksum over buffer bytes
-void ubxChecksum(const uint8_t* data, uint16_t len, uint8_t &ckA, uint8_t &ckB)
-{
-  ckA = 0; ckB = 0;
-  for (uint16_t i = 0; i < len; i++) {
-    ckA = ckA + data[i];
-    ckB = ckB + ckA;
-  }
-}
 
 
 // ------------------------------------------------------------
@@ -83,6 +58,31 @@ void enableGPSPower()
     delay(200);
 }
 
+
+void flushGpsInput(uint32_t ms) //Wait for a defined microseconds and flush the GPS input buffer to avoid reading old data
+{
+  uint32_t start = millis();
+  while (millis() - start < ms) {
+    while (GPSSerial.available()) (void)GPSSerial.read();
+    delay(1);
+  }
+}
+
+void sendUBX(const uint8_t* msg, uint16_t len) // send a UBX configiuration message to the GPS
+{
+  GPSSerial.write(msg, len);
+  GPSSerial.flush(); // ensure bytes are pushed out (ok on ESP32)
+}
+
+// UBX checksum over buffer bytes
+void ubxChecksum(const uint8_t* data, uint16_t len, uint8_t &ckA, uint8_t &ckB)
+{
+  ckA = 0; ckB = 0;
+  for (uint16_t i = 0; i < len; i++) {
+    ckA = ckA + data[i];
+    ckB = ckB + ckA;
+  }
+}
 
 
 // Wait for UBX-ACK-ACK or UBX-ACK-NAK for a given (cls,id)
@@ -161,9 +161,11 @@ void sendUBX_CFG_MSG(uint8_t targetMsgClass, uint8_t targetMsgId, uint8_t rateUA
   sendUBX(msg, sizeof(msg));
 }
 
+// ---------- helpers ----------
 
 
-// Call this repeatedly from loop(): readAndPrintLatLonFromUbx();
+
+// used from inside readAndPrintLatLonValidFromUbx
 
 static int32_t readI32LE(const uint8_t *p) {
   return (int32_t)(
@@ -173,8 +175,9 @@ static int32_t readI32LE(const uint8_t *p) {
       ((uint32_t)p[3] << 24)
   );
 }
+// ---------- latidtude and longitudt ----------
 
-void readAndPrintLatLonFromUbx()
+void readAndPrintLatLonValidFromUbx()
 {
   // UBX parser state
   static uint8_t state = 0;
@@ -248,20 +251,35 @@ void readAndPrintLatLonFromUbx()
 
         // Validate checksum
         if (rxCkA == ckA && rxCkB == ckB) {
-          // If NAV-PVT, extract lon/lat
+          // If NAV-PVT, extract lon/lat + validity
           if (cls == 0x01 && id == 0x07 && len >= 32) {
+
+            // NAV-PVT fields:
+            // payload[20] = fixType
+            // payload[21] = flags (bit0 = gnssFixOk)
+            uint8_t fixType = payload[20];
+            uint8_t flags   = payload[21];
+
+            bool gnssFixOk = (flags & 0x01) != 0;
+            bool valid = gnssFixOk && (fixType >= 2);
+
             int32_t lon_e7 = readI32LE(&payload[24]);
             int32_t lat_e7 = readI32LE(&payload[28]);
 
             double lon = lon_e7 / 1e7;
             double lat = lat_e7 / 1e7;
 
-            Serial.print("LAT=");
+            Serial.print("valid=");
+            Serial.print(valid ? "true" : "false");
+            Serial.print(" fixType=");
+            Serial.print(fixType);
+            Serial.print(" LAT=");
             Serial.print(lat, 7);
             Serial.print(" LON=");
             Serial.println(lon, 7);
           }
         }
+
         // Restart for next frame
         state = 0;
         break;
@@ -269,15 +287,18 @@ void readAndPrintLatLonFromUbx()
   }
 }
 
+// ---------- SETUP  ----------
 
-// ---------- minimal test ----------
 void setup()
 {
   Serial.begin(115200);
 
-    Wire.begin(I2C_SDA, I2C_SCL);
+  // ---------- POWER FOR GPS by AXP2101 ----------
+
+  Wire.begin(I2C_SDA, I2C_SCL);
 
   delay(50);
+
 
   Wire.beginTransmission(AXP2101_ADDR);
 
@@ -309,49 +330,7 @@ void setup()
   GPSSerial.begin(9600, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
   delay(200);
 
-  Serial.println("Starting minimal UBX ACK test...");
-
-
-
-  flushGpsInput(200);
-  sendUBX_CFG_MSG(0xF0, 0x04, 0); // RMC off Recommended Minimum navigation data.
-  AckResult r = waitForAck(0x06, 0x01, 4000);
-  if (r == ACK_OK) Serial.println("✅ Got ACK-ACK for CFG-MSG");
-  else if (r == ACK_NAK) Serial.println("❌ Got ACK-NAK for CFG-MSG");
-  else Serial.println("⚠️ ACK TIMEOUT (no valid ACK/NAK seen)");
-
-
-
-
-
-  flushGpsInput(200);
-/*
-    // Enable UBX-NAV-SAT (01 35) on UART1, rate = 1
-  sendUBX_CFG_MSG(0x01, 0x35, 1);
-
-  // ACK is for CFG-MSG (06 01)
-  AckResult r2 = waitForAck(0x06, 0x01, 1500);
-  if (r2 == ACK_OK) Serial.println("✅ Got ACK-ACK enabling NAV-SAT");
-  else if (r2 == ACK_NAK) Serial.println("❌ Got ACK-NAK enabling NAV-SAT");
-  else Serial.println("⚠️ ACK TIMEOUT enabling NAV-SAT");
-
-*/
-//disable   UBX-NAV-SAT 
-  sendUBX_CFG_MSG(0x01,  0x35, 0); // GGA
-  waitForAck(0x06, 0x01, 2000);
-  flushGpsInput(200);
-
-
-
-  sendUBX_CFG_MSG(0x01, 0x07, 1); //  contains position, time, fix status, number of satellites, altitude, speed, heading, accuracy estimates, etc
-
-  // ACK is for CFG-MSG (06 01)
-  AckResult r2 = waitForAck(0x06, 0x01, 1500);
-  if (r2 == ACK_OK) Serial.println("✅ Got ACK-ACK enabling UBX-NAV-PVT");
-  else if (r2 == ACK_NAK) Serial.println("❌ Got ACK-NAK enabling UBX-NAV-PVT");
-  else Serial.println("⚠️ ACK TIMEOUT enabling UBX-NAV-PVT");
-
-
+// ----------  CONFIGURE UBLOX GPS NEO M8N ----------
 
   flushGpsInput(200);
   // Disable all common NMEA messages on UART1
@@ -372,15 +351,37 @@ void setup()
   flushGpsInput(200);
   sendUBX_CFG_MSG(0xF0, 0x05, 0); // VTG
   waitForAck(0x06, 0x01, 2000);
+  flushGpsInput(200); 
+  sendUBX_CFG_MSG(0x01,  0x35, 0); // UBX-NAV-SAT
+  waitForAck(0x06, 0x01, 2000);
+  flushGpsInput(200);
+  sendUBX_CFG_MSG(0xF0, 0x04, 0); // RMC 
+  waitForAck(0x06, 0x01, 2000);
   flushGpsInput(200);
 
-while (GPSSerial.available()) {
-  uint8_t b = GPSSerial.read();
-  if (b < 16) Serial.print('0');
-  Serial.print(b, HEX);
-  Serial.print(' ');
-}
+/*
+  AckResult r = waitForAck(0x06, 0x01, 4000);
+  if (r == ACK_OK) Serial.println("✅ Got ACK-ACK for  CFG-MSG RMC off");
+  else if (r == ACK_NAK) Serial.println("❌ Got ACK-NAK for CFG-MSG");
+  else Serial.println("⚠️ ACK TIMEOUT (no valid ACK/NAK for  RMC off seen)");
+
+  flushGpsInput(200);
+*/
+
+// ----------  ACTIVATE  ----------
+
+sendUBX_CFG_MSG(0x01, 0x07, 1); //  contains position, time, fix status, number of satellites, altitude, speed, heading, accuracy estimates, etc
+  waitForAck(0x06, 0x01, 2000);
+  flushGpsInput(200);
+/*
+  // ACK is for CFG-MSG (06 01)
+  AckResult r2 = waitForAck(0x06, 0x01, 1500);
+  if (r2 == ACK_OK) Serial.println("✅ Got ACK-ACK enabling UBX-NAV-PVT");
+  else if (r2 == ACK_NAK) Serial.println("❌ Got ACK-NAK enabling UBX-NAV-PVT");
+  else Serial.println("⚠️ ACK TIMEOUT enabling UBX-NAV-PVT");
+*/
+
 }
 void loop() {
-  readAndPrintLatLonFromUbx();
+  readAndPrintLatLonValidFromUbx();
 }
