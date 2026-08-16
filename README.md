@@ -9,18 +9,17 @@ First in setup a message from ESP32 to Ubox Neo M8N, that configures UBX-NAV-SAT
 ## 1. Sender with GPS 
 
 1. **GPS Initialization & Configuration**
-   - Powers the GPS module via the AXP2101 PMIC (power management IC)
-   - Configures the u-blox GPS to output only UBX binary protocol (disables NMEA sentences)
-   - Enables NAV-PVT (Position, Velocity, Time) messages at 1Hz rate on UART1
-    - The program attempts to communicate with the AXP2101 chip (which manages the voltages). If it finds a signal, it activates the output that powers the GPS (3.3V). Otherwise, it displays a warning.
 
-  - Initializing the GPS serial port:
+   - Powers the GPS module via the AXP2101 PMIC (power management IC) The program attempts to communicate with the AXP2101 chip (which manages the voltages). If it finds a signal, it activates the output that powers the GPS (3.3V). Otherwise, it displays a warning.
+
+   - Configures the u-blox GPS to output only UBX binary protocol (disables NMEA sentences) Enables NAV-PVT (Position, Velocity, Time) messages at 1Hz rate on UART1
+   - Initializing the GPS serial port:
     This opens a 9600 baud UART connection between the ESP32 and the GPS (pins 34 for receiving, 12 for transmitting).
 
    - Configuring the GPS:
     By default, the GPS sends many NMEA sentences (GGA, GSA, RMC, etc.). The program disables them all one by one by sending UBX configuration commands.
 
-   - Then it activates a single UBX message called NAV-PVT (which contains the position, speed, time, altitude, etc.).
+   - Then it activates a single UBX message called NAV-PVT (which contains the    position, speed, time, altitude, etc.).
     For each command, it waits for the GPS acknowledgment response (ACK or NAK) and displays whether it was successful.
 
 2. **UBX Protocol Parsing**
