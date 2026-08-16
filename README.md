@@ -12,6 +12,16 @@ First in setup a message from ESP32 to Ubox Neo M8N, that configures UBX-NAV-SAT
    - Powers the GPS module via the AXP2101 PMIC (power management IC)
    - Configures the u-blox GPS to output only UBX binary protocol (disables NMEA sentences)
    - Enables NAV-PVT (Position, Velocity, Time) messages at 1Hz rate on UART1
+    - The program attempts to communicate with the AXP2101 chip (which manages the voltages). If it finds a signal, it activates the output that powers the GPS (3.3V). Otherwise, it displays a warning.
+
+  - Initializing the GPS serial port:
+    This opens a 9600 baud UART connection between the ESP32 and the GPS (pins 34 for receiving, 12 for transmitting).
+
+   - Configuring the GPS:
+    By default, the GPS sends many NMEA sentences (GGA, GSA, RMC, etc.). The program disables them all one by one by sending UBX configuration commands.
+
+   - Then it activates a single UBX message called NAV-PVT (which contains the position, speed, time, altitude, etc.).
+    For each command, it waits for the GPS acknowledgment response (ACK or NAK) and displays whether it was successful.
 
 2. **UBX Protocol Parsing**
    - Implements a robust state machine parser for UBX binary protocol
@@ -34,18 +44,6 @@ First in setup a message from ESP32 to Ubox Neo M8N, that configures UBX-NAV-SAT
    - Reports transmission errors and timeouts
    - Shows success/failure status for each received packet
 
-### 3. GPS configuration
-Power supply check:
-The program attempts to communicate with the AXP2101 chip (which manages the voltages). If it finds a signal, it activates the output that powers the GPS (3.3V). Otherwise, it displays a warning.
-
-Initializing the GPS serial port:
-This opens a 9600 baud UART connection between the ESP32 and the GPS (pins 34 for receiving, 12 for transmitting).
-
-Configuring the GPS:
-By default, the GPS sends many NMEA sentences (GGA, GSA, RMC, etc.). The program disables them all one by one by sending UBX configuration commands.
-
-Then it activates a single UBX message called NAV-PVT (which contains the position, speed, time, altitude, etc.).
-For each command, it waits for the GPS acknowledgment response (ACK or NAK) and displays whether it was successful.
 
 ## Hardware / Components Used
 
@@ -60,25 +58,17 @@ For each command, it waits for the GPS acknowledgment response (ACK or NAK) and 
   - Marking: *LILYGO 868/915 MHz Model: LORA32 SX1262*
 
 
-## Building and Uploading
+### Building and Uploading
 
-### 1. Select the Environment
+#### Select the Environment
 
-The project has two build defined in `platformio.ini`:
+The project has two build defined in platformio.ini:
 
 - **sender** - Compiles sender.cpp + SendOwnInfo.cpp (GPS transmission)
 - **receiver** - Compiles only receive.cpp (LoRa receiver code)
 
-### 2. Build & Upload to Sender T-Beam
 
-# Using PlatformIO CLI
-pio run -e sender --target upload
-
-# Or in VS Code PlatformIO extension:
-# Click the"PlatformIO" icon → "Project Tasks" → "sender" → "Upload"
-```
-
-### 3. Build & Upload to Receiver T-Beam
+### Build & Upload to Receiver T-Beam
 
 ```bash
 # Using PlatformIO CLI
@@ -88,7 +78,7 @@ pio run -e receiver --target upload
 # Click the "PlatformIO" icon → "Project Tasks" → "receiver" → "Upload"
 ```
 
-### 4. Monitor Serial Output
+### Monitor Serial Output
 
 ```bash
 # Monitor sender (GPS coordinates)
