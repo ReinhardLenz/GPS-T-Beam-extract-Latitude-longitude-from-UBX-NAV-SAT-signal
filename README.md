@@ -6,6 +6,8 @@ This project implements a GPS data transmission system using two TTGO T-Beam boa
 First in setup a message from ESP32 to Ubox Neo M8N, that configures UBX-NAV-SAT messages to Lilygo T-Beam ESP32, and then in Loop, from this message a longitude and latitude is extracted. These coordinates, together with information about GPS signal quality is transmitted to the second  Lilygo T-Beam, which prints out the data.  
 
 
+![Diagram](images/landscape.png)
+
 ## 1. Sender with GPS 
 
 1. **GPS Initialization & Configuration**
