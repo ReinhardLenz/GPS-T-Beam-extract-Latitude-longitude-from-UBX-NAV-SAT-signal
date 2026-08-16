@@ -1,112 +1,56 @@
-# GPS T-Beam extract Latitude and longitude from UBX-NAV-SAT signal
-
-First in setup a message from ESP32 to Ubox Neo M8N, that configures UBX-NAV-SAT messages to T-BEAM ESP32, and then in Loop, from this message a longitude and latitude is extracted
+# Lora Communication with first Lilygo T-Beam sending its Latitude and longitude with UBX-NAV-SAT signal to a second Lilygo T-Beam
 
 
-## T-beam GPS communication
+This project implements a GPS data transmission system using two TTGO T-Beam boards (ESP32 with LoRa and GPS capabilities). One T-Beam acts as a **sender** that reads GPS coordinates from a u-blox GNSS module and transmits them via LoRa radio, while the other acts as a **receiver** that listens for these transmissions and displays the received data over serial.
 
-the big problem with a T-Beam is, that there is no "direct access" from the computer to the UBLOX GPS NEO M8N chip. But when I want to define and go deeper into the communication between ESP32 and UBLOX GPS NEO M8N chip , I need to use PYGPSClient or the U-Center analyzing program. Normally, with this PYGPSClient, I need to directly connect the computer to UBLOX GPS NEO M8N chip. But in T-Beam (which is mostly made for Meshtastic) I cannot do it. Here, I need a "Passthrough" program, so the everything transmitted from UBLOX GPS NEO M8N to ESP32, is directly forwarded to computer where the signal can be analyzed with PYGPSClient program. But there is a complication: the configuration signals from PYGPSClient to UBLOX GPS NEO M8N  cannot be forwarded by this program. THe reason, I don't know exactly, but I think, in the "loop" part would have to be some specialized "flush GPS input" functions that would allow messages from the computer to "get through" to the GPS chip. T-Beam does not allow to connect a logic analyzer to these TX RX pins. So, anything to do with configuration must be done in the setup part of the program. This program is a "crutch"  or some kind of "walking aid" for the PYGPSClient program.
+First in setup a message from ESP32 to Ubox Neo M8N, that configures UBX-NAV-SAT messages to Lilygo T-Beam ESP32, and then in Loop, from this message a longitude and latitude is extracted. These coordinates, together with information about GPS signal quality is transmitted to the second  Lilygo T-Beam, which prints out the data.  
 
 
-The program is installed on a T-Beam (a small box containing an ESP32, a NEO-M8N GPS receiver, and an AXP2101 power management chip). Its purpose is twofold:
+## 1. Sender with GPS 
 
----
+1. **GPS Initialization & Configuration**
+   - Powers the GPS module via the AXP2101 PMIC (power management IC)
+   - Configures the u-blox GPS to output only UBX binary protocol (disables NMEA sentences)
+   - Enables NAV-PVT (Position, Velocity, Time) messages at 1Hz rate on UART1
 
-## What it does
-To configure the GPS by sending it special commands (USBX protocol) to disable the NMEA messages it sends by default and keep only a single useful message (position, speed, altitude, etc.).
+2. **UBX Protocol Parsing**
+   - Implements a robust state machine parser for UBX binary protocol
+   - Extracts latitude, longitude, fix type, and validity flags from NAV-PVT frames
+   - Stores the latest valid position data
 
-To act as a bridge between your computer (connected via USB) and the GPS: everything you type on the computer's serial port is transmitted to the GPS, and everything the GPS sends back is displayed on your screen.
+3. **LoRa Transmission**
+   - Uses RadioLib library for SX1262 LoRa transceiver control
+   - Transmits formatted GPS data string: `LAT=xx.xxxxxxx LON=xx.xxxxxxx valid=true/false fixType=0-3`
+   - Operates at 868 MHz (EU ISM band)
 
-### 1. At startup (setup)
+
+## 2. Receiver  
+1. **Continuous Listening**
+   - Initializes SX1262 LoRa receiver at same frequency (868 MHz)
+   - Listens for incoming transmissions in a continuous loop
+   - Displays received messages on Serial Monitor
+
+2. **Error Handling**
+   - Reports transmission errors and timeouts
+   - Shows success/failure status for each received packet
+
+### 3. GPS configuration
 Power supply check:
 The program attempts to communicate with the AXP2101 chip (which manages the voltages). If it finds a signal, it activates the output that powers the GPS (3.3V). Otherwise, it displays a warning.
 
 Initializing the GPS serial port:
 This opens a 9600 baud UART connection between the ESP32 and the GPS (pins 34 for receiving, 12 for transmitting).
 
-Configuring the GPS (the most important part):
-By default, the GPS sends many NMEA sentences (GGA, GSA, RMC, etc.). The program disables them all one by one by sending UBX commands.
+Configuring the GPS:
+By default, the GPS sends many NMEA sentences (GGA, GSA, RMC, etc.). The program disables them all one by one by sending UBX configuration commands.
 
 Then it activates a single UBX message called NAV-PVT (which contains the position, speed, time, altitude, etc.).
 For each command, it waits for the GPS acknowledgment response (ACK or NAK) and displays whether it was successful.
 
-Displaying a brief summary:
-After all these commands, it reads what the GPS sent in the meantime and displays it in hexadecimal on the USB port.
-
-### 2. Looping
-The program simply shuttles between the following:
-
-GPS Serial → USB: Everything the GPS sends is immediately copied to your computer (serial port).
-USB Serial → GPS: Everything you type on the serial monitor is sent directly to the GPS. Basically you cann also comment this line out, because anyway it will not transmit anything, or so I think
-
-But basically this allows you to communicate directly with the GPS while the program is running.
-
-### 3. Hidden Functions
-
-flushGpsInput: Clears the GPS's input buffer for a certain period (to avoid reading old messages before a command).
-
-sendUBX: Sends a UBX packet (binary format) to the GPS.
-
-ubxChecksum: Calculates the checksum that validates the UBX packet.
-
-waitForAck: Waits for the GPS's response to a command (either "OK", "rejected", or "timeout").
-axpWrite / axpRead: Controls the power chip via I2C.
-
-enableGPSPower: Turns on the GPS power supply (3.3V) by writing to the AXP2101 registers.
-
-Visual summary
-
-Computer (USB) ←→ ESP32 (bridge) ←→ NEO-M8N GPS (UART)
-Initial configuration: Disables NMEA, enables UBX-NAV-PVT
-Once configured, the GPS only sends the UBX-NAV-PVT message (full navigation data), and the program forwards it to the computer.
-
-In short: This program turns on the GPS, configures it to communicate only in UBX mode (a single type of message), and then acts as a transparent cable between the computer and the GPS, allowing you to read the data or send commands manually.
-
-## Installation of PyGPSClient
-
-First, install the latest Python
-
-```bash
-winget install Python.Python.3.12
-py -0p
-```
-Activate the virtual environment
-
-
-```bash
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-```
-
-Install pygpsclient
-
-```bash
-python -m pip install --upgrade pygpsclient
-```
-
-How to start pyGPSClient
-1) Activate the venv (recommended)
-From your project folder:
-
-```bash
-cd "C:\folder\sub\sub\pyGPSClient"
-```
-Activate the virtual environment
-
-```bash
-.\.venv\Scripts\Activate.ps1
-```
-Then start pyGPSClient by just writing 
-
-```bash
-pygpsclient
-```
-
 ## Hardware / Components Used
 
 ### Boards
-- **2× LILYGO T-Beam V1.2**
+- **2 × LILYGO Lilygo T-Beam V1.2**
   - MCU: **ESP32**
   - LoRa radio: **SX1262**
   - GPS: **NEO-M8N**
@@ -114,6 +58,106 @@ pygpsclient
   - USB-UART: **CH9102**
   - Flash: 4MB, PSRAM: 8MB
   - Marking: *LILYGO 868/915 MHz Model: LORA32 SX1262*
+
+
+## Building and Uploading
+
+### 1. Select the Environment
+
+The project has two build defined in `platformio.ini`:
+
+- **sender** - Compiles sender.cpp + SendOwnInfo.cpp (GPS transmission)
+- **receiver** - Compiles only receive.cpp (LoRa receiver code)
+
+### 2. Build & Upload to Sender T-Beam
+
+# Using PlatformIO CLI
+pio run -e sender --target upload
+
+# Or in VS Code PlatformIO extension:
+# Click the"PlatformIO" icon → "Project Tasks" → "sender" → "Upload"
+```
+
+### 3. Build & Upload to Receiver T-Beam
+
+```bash
+# Using PlatformIO CLI
+pio run -e receiver --target upload
+
+# Or in VS Code:
+# Click the "PlatformIO" icon → "Project Tasks" → "receiver" → "Upload"
+```
+
+### 4. Monitor Serial Output
+
+```bash
+# Monitor sender (GPS coordinates)
+pio device monitor -e sender
+
+# Monitor receiver (received messages)
+pio device monitor -e receiver
+```
+
+**Note:** If you have both T-Beams connected simultaneously, specify the correct COM port:
+```bash
+pio device monitor --port COM3   # Windows
+pio device monitor --port /dev/ttyUSB0  # Linux/Mac
+```
+
+## What is LoRa?
+
+**LoRa** (Long Range) is a wireless modulation technology developed by Semtech that enables low-power, long-range communication for IoT (Internet of Things) devices. It uses a proprietary spread-spectrum technique called Chirp Spread Spectrum (CSS) to achieve:
+
+- **Long range:** Up to 15+ km in rural areas, 2-5 km in urban environments
+- **Low power:** Devices can operate for years on a single battery
+- **Low data rate:** Typically 0.3 kbps to 50 kbps (perfect for sensor data)
+- **Excellent penetration:** Can penetrate buildings and obstacles better than WiFi/BLE
+
+LoRa operates in the license-free ISM bands (868 MHz in Europe, 915 MHz in North America, 433 MHz in Asia). It's ideal for applications like:
+- GPS tracking
+- Environmental monitoring
+- Smart agriculture
+- Asset tracking
+- Smart city sensors
+
+## Expected Output
+
+### Sender Serial Output:
+```
+AXP2101 detected -> enabling GPS power...
+GPS power enabled.
+SX126x Sender starting...
+✅ Radio init OK
+53.123456, 13.654321
+53.123457, 13.654323
+53.123455, 13.654319
+...
+```
+
+### Receiver Serial Output:
+```
+SX126x Receiver starting...
+✅ Radio init OK
+Listening...
+LAT=53.1234560 LON=13.6543210 valid=true fixType=3
+LAT=53.1234570 LON=13.6543230 valid=true fixType=3
+LAT=53.1234550 LON=13.6543190 valid=true fixType=3
+...
+```
+
+## Troubleshooting
+
+| Problem | Possible Solution |
+|---------|------------------|
+| GPS not fixing | Ensure clear sky view, check antenna connection |
+| No LoRa transmission | Verify frequency matches between sender/receiver |
+| AXP2101 not detected | Check I2C wiring, try resetting T-Beam |
+| Serial monitor gibberish | Ensure baud rate matches (115200) |
+| Both T-Beams same behavior | Double-check you uploaded correct environment |
+
+## License
+
+This project is provided as-is for educational purposes. Use at your own risk.
 
 ## Dependencies / Libraries Used
  - Arduino framework (ESP32)
@@ -143,7 +187,7 @@ useful program for GPS devices:
 
 https://wiki.paparazziuav.org/wiki/Sensors/GPS
 
-T-Beam pin map:
+Lilygo T-Beam pin map:
 
 https://github.com/Xinyuan-LilyGO/LilyGo-LoRa-Series/blob/master/docs/en/t_beam/t_beam_hw.md
 

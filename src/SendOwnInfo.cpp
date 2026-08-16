@@ -141,6 +141,7 @@ OwnInfo prepareAndSendOwnInfo(
   // Build payload
   if (out.hasFix) {
     char buf[96];
+
     snprintf(
       buf, sizeof(buf),
       "LAT=%.7f LON=%.7f valid=%s fixType=%u\r\n",
@@ -149,6 +150,9 @@ OwnInfo prepareAndSendOwnInfo(
       out.valid ? "true" : "false",
       (unsigned)out.fixType
     );
+
+
+
     out.payload = buf;
   } else {
     out.payload = "No NAV-PVT\r\n";

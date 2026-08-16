@@ -49,7 +49,7 @@ void loop() {
   int state = radio.receive(str);
 
   if (state == RADIOLIB_ERR_NONE) {
-    Serial.print("✅ RX: ");
+    //Serial.print("✅ RX: ");
     Serial.println(str);
 
 
