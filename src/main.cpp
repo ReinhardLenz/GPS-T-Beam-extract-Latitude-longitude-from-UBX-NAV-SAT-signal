@@ -8,6 +8,8 @@
 int sats = 0;
 char msg[96];
 
+GpsInfo companion;                 // last parsed companion data (persists)
+bool   haveCompanionFix = false;   // indicates we have valid parsed data at least once
 // GPS UART
 HardwareSerial GPSSerial(1);
 static const int GPS_RX_PIN = 34;   // GPS TX -> MCU RX
@@ -39,7 +41,7 @@ bool transmitFlag = false;
 // flag to indicate that a packet was sent or received
 volatile bool operationDone = false;
 
-//#define INITIATING_NODE
+#define INITIATING_NODE
 
 void setFlag(void) {
   operationDone = true;
@@ -145,13 +147,8 @@ void loop() {
       int state = radio.readData(str);
 
       if (state == RADIOLIB_ERR_NONE) {
-        GpsInfo companion;
         if (parseGpsPayload(str, companion)) {
-          Serial.printf("Parsed: lat=%.7f lon=%.7f valid=%s fixType=%u\n",
-                        companion.lat,
-                        companion.lon,
-                        companion.valid ? "true" : "false",
-                        (unsigned)companion.fixType);
+          haveCompanionFix = true;
         } else {
           Serial.println("❌ Failed to parse companion payload");
         }
@@ -161,10 +158,22 @@ void loop() {
 
       // send own info
       GpsInfo own = prepareAndSendOwnInfo(radio, transmissionState, transmitFlag);
+
+
+      if (haveCompanionFix && companion.hasData) {
+        Serial.print(companion.lat, 6);
+        Serial.print(", ");
+        Serial.println(companion.lon, 6);
+      } else {
+        Serial.println("Companion: (no data yet)");
+      }
+
       Serial.print(own.lat, 6);
       Serial.print(", ");
       Serial.println(own.lon, 6);
       transmitFlag = true;
+
+      
     }
   }
 }
