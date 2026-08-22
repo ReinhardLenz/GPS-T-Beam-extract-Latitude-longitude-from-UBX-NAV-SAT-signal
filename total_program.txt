@@ -449,12 +449,45 @@ volatile bool operationDone = false;
 //            and MUST NOT have any arguments!
 
 
-//#define INITIATING_NODE
+#define INITIATING_NODE
 
 
 void setFlag(void) {
   // we sent or received a packet, set the flag
   operationDone = true;
+}
+
+
+struct CompanionInfo {
+  float lat_companion = 0.0f;
+  float lon_companion = 0.0f;
+  bool  valid = false;
+  uint8_t fixType = 0;
+};
+
+bool parseCompanionPayload(const String& str, CompanionInfo& in) {
+  // Copy to a C buffer (sscanf works on C strings)
+  char buf[128];
+  str.toCharArray(buf, sizeof(buf));
+
+  char validStr[6] = {0}; // "true" or "false" (+ null)
+
+  // Note: space before fixType allows any whitespace/newlines between tokens
+  int n = sscanf(
+    buf,
+    "LAT=%f LON=%f valid=%5s fixType=%hhu",
+    &in.lat_companion,
+    &in.lon_companion,
+    validStr,
+    &in.fixType
+  );
+
+  if (n != 4) {
+    return false; // parsing failed
+  }
+
+  in.valid = (strcmp(validStr, "true") == 0);
+  return true;
 }
 
 
@@ -543,21 +576,35 @@ void loop() {
     } else {
       // the previous operation was reception
       // print data and send another packet
+
+
+
+
       String str;
       int state = radio.readData(str);
 
       if (state == RADIOLIB_ERR_NONE) {
-        // print data of the packet
-        Serial.println(str);
+//        Serial.println(str);
+
+        CompanionInfo in;
+        if (parseCompanionPayload(str, in)) {
+          Serial.printf("Parsed: lat=%.7f lon=%.7f valid=%s fixType=%u\n",
+                        in.lat_companion,
+                        in.lon_companion,
+                        in.valid ? "true" : "false",
+                        (unsigned)in.fixType);
+        } else {
+          Serial.println("❌ Failed to parse companion payload");
+        }
       }
 
       delay(1000);
       
-  OwnInfo own = prepareAndSendOwnInfo(radio, transmissionState, transmitFlag);
-    Serial.print(own.lat_proper, 6);
-    Serial.print(", ");
-    Serial.println(own.lon_proper, 6);
-    transmitFlag = true;
+      OwnInfo own = prepareAndSendOwnInfo(radio, transmissionState, transmitFlag);
+        Serial.print(own.lat_proper, 6);
+        Serial.print(", ");
+        Serial.println(own.lon_proper, 6);
+        transmitFlag = true;
     }
   }
 }

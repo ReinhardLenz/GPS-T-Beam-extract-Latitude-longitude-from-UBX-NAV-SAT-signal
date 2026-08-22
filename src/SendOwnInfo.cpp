@@ -122,44 +122,38 @@ static void parseUbxStream() {
   }
 }
 
-OwnInfo prepareAndSendOwnInfo(
+GpsInfo prepareAndSendOwnInfo(
   SX1262& radio,
   int& transmissionState,
   bool& transmitFlag
 ) {
-  OwnInfo out;
-
   // Update latest NAV-PVT data from the serial stream
   parseUbxStream();
 
-  out.hasFix = s_havePvt;
-  out.valid  = s_valid;
+  GpsInfo out;
+  out.hasData = s_havePvt;
+  out.valid   = s_valid;
   out.fixType = s_fixType;
-  out.lat_proper = s_lat;
-  out.lon_proper = s_lon;
+  out.lat     = s_lat;
+  out.lon     = s_lon;
 
-  // Build payload
-  if (out.hasFix) {
-    char buf[96];
-
+  // Build payload locally (NOT stored in struct anymore)
+  char buf[96];
+  if (out.hasData) {
     snprintf(
       buf, sizeof(buf),
       "LAT=%.7f LON=%.7f valid=%s fixType=%u\r\n",
-      out.lat_proper,
-      out.lon_proper,
+      out.lat,
+      out.lon,
       out.valid ? "true" : "false",
       (unsigned)out.fixType
     );
-
-
-
-    out.payload = buf;
   } else {
-    out.payload = "No NAV-PVT\r\n";
+    snprintf(buf, sizeof(buf), "No NAV-PVT\r\n");
   }
 
   // Transmit
-  transmissionState = radio.startTransmit(out.payload.c_str());
+  transmissionState = radio.startTransmit(buf);
   transmitFlag = true;
 
   return out;
