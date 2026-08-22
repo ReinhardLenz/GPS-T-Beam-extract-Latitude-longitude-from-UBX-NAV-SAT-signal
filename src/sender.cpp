@@ -10,15 +10,24 @@ HardwareSerial GPSSerial(1);
 static const int GPS_RX_PIN = 34;   // GPS TX -> MCU RX
 static const int GPS_TX_PIN = 12;   // GPS RX -> MCU TX
 
-// LoRa pins
+// --------------------
+// ⚠️  LORA
+// --------------------
 static const int LORA_NSS  = 18;
 static const int LORA_DIO1 = 33;
 static const int LORA_RST  = 23;
 static const int LORA_BUSY = 32;
 
-static const float LORA_FREQ = 868.0;
+SX1262 radio = SX1262(
+    new Module(
+        LORA_NSS,
+        LORA_DIO1,
+        LORA_RST,
+        LORA_BUSY
+    )
+);
 
-SX1262 radio = SX1262(new Module(LORA_NSS, LORA_DIO1, LORA_RST, LORA_BUSY));
+static const float LORA_FREQ = 868.0;
 
 int  transmissionState = RADIOLIB_ERR_NONE;
 bool transmitFlag = false;

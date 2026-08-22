@@ -68,8 +68,6 @@ void AXP2101_beginAndEnableGPSPower();
 // Content from SendOwnInfo.cpp
 #include "SendOwnInfo.h"
 
-
-
 // We keep a pointer to the GPS serial provided by main.cpp
 static HardwareSerial* s_gps = nullptr;
 
@@ -81,9 +79,6 @@ static uint16_t s_payloadIdx = 0;
 static uint8_t  s_payload[92]; // NAV-PVT payload length is 92 bytes
 static uint8_t  s_ckA = 0, s_ckB = 0;
 static uint8_t  s_rxCkA = 0, s_rxCkB = 0;
-
-// wait GPS before send
-static volatile bool s_newPvt = false;
 
 // last decoded values (so we can send even if no new frame this loop)
 static bool     s_havePvt = false;
@@ -101,25 +96,9 @@ static int32_t readI32LE(const uint8_t *p) {
   );
 }
 
-static void parseUbxStream();
-
 void SendOwnInfo_begin(HardwareSerial& gpsSerial) {
   s_gps = &gpsSerial;
 }
-
-
-// wait GPS before send
-bool SendOwnInfo_pollNewNavPvt() {
-  // parse incoming bytes first (non-blocking)
-  parseUbxStream();
-
-  if (s_newPvt) {
-    s_newPvt = false;
-    return true;
-  }
-  return false;
-}
-
 
 // Parse as much as available; update s_havePvt/s_lat/s_lon/s_valid/s_fixType when NAV-PVT arrives
 static void parseUbxStream() {
@@ -202,7 +181,6 @@ static void parseUbxStream() {
             s_fixType = fixType;
             s_valid = valid;
             s_havePvt = true;
-            s_newPvt = true;
           }
         }
 
@@ -250,13 +228,8 @@ OwnInfo prepareAndSendOwnInfo(
 
   // Transmit
   transmissionState = radio.startTransmit(out.payload.c_str());
-  if (transmissionState == RADIOLIB_ERR_NONE) {
-    transmitFlag = true;
-  } else {
-    transmitFlag = false;
-    Serial.print("❌ startTransmit failed, code=");
-    Serial.println(transmissionState);
-  }
+  transmitFlag = true;
+
   return out;
 }
 
@@ -279,8 +252,6 @@ struct OwnInfo {
 
 // Provide the GPS serial instance to the module (call once in setup)
 void SendOwnInfo_begin(HardwareSerial& gpsSerial);
-
-bool SendOwnInfo_pollNewNavPvt();
 
 // Call repeatedly from loop: parses UBX stream and transmits payload
 OwnInfo prepareAndSendOwnInfo(
@@ -433,11 +404,11 @@ bool UbloxHelper_configureUbxOnlyNavPvt();
 #include <Arduino.h>
 #include <RadioLib.h>
 #include <SPI.h>
-#include <SoftwareSerial.h>
 
 // --------------------
-// ⚠️  T- BEAM pins
+// ⚠️  LORA
 // --------------------
+
 static const int LORA_NSS  = 18;   // CS
 static const int LORA_DIO1 = 33;   // DIO1 (IRQ)
 static const int LORA_RST  = 23;   // RESET
@@ -458,14 +429,16 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
 
-  Serial.println("SX126x Receiver starting...");
+  Serial.println("SX126x Sender starting...");
   SPI.begin(5, 19, 27, 18);
+
   int state = radio.begin(LORA_FREQ);
   if (state != RADIOLIB_ERR_NONE) {
     Serial.print("radio.begin() failed, code = ");
     Serial.println(state);
     while (true) { delay(1000); }
   }
+  Serial.println("✅ Radio init OK");
 
   // Optional: must match sender if you changed them there
   // radio.setSpreadingFactor(7);
@@ -494,113 +467,90 @@ void loop() {
 }
 
 // Content from sender.cpp
-// sender.cpp
 #include <Arduino.h>
 #include <SPI.h>
 #include <RadioLib.h>
+#include "SendOwnInfo.h"
 #include "AXP2101.h"
 #include "U-blox-helper.h"
-#include "SendOwnInfo.h"
-#include <config.h>
+
+// GPS UART
+HardwareSerial GPSSerial(1);
+static const int GPS_RX_PIN = 34;   // GPS TX -> MCU RX
+static const int GPS_TX_PIN = 12;   // GPS RX -> MCU TX
 
 // --------------------
-// GPS UART (T-Beam)
+// ⚠️  LORA
 // --------------------
-HardwareSerial GPSSerial(1);              // UART1 on ESP32
+static const int LORA_NSS  = 18;
+static const int LORA_DIO1 = 33;
+static const int LORA_RST  = 23;
+static const int LORA_BUSY = 32;
 
+SX1262 radio = SX1262(
+    new Module(
+        LORA_NSS,
+        LORA_DIO1,
+        LORA_RST,
+        LORA_BUSY
+    )
+);
 
-SX1262 radio = SX1262(new Module(LORA_NSS, LORA_DIO1, LORA_RST, LORA_BUSY));
+static const float LORA_FREQ = 868.0;
 
-// Optional: track last fix
-static bool   lastFixValid = false;
-static double lastLat = 0.0;
-static double lastLon = 0.0;
+int  transmissionState = RADIOLIB_ERR_NONE;
+bool transmitFlag = false;
 
-static void initRadioOrHalt() {
+// optional: keep last known good fix
+double lastLatProper = 0.0;
+double lastLonProper = 0.0;
+bool   lastProperFixValid = false;
+
+void setup() {
+  Serial.begin(115200);
+
+  // Power GPS via AXP2101 (moved to separate module)
+  AXP2101_beginAndEnableGPSPower();
+
+  // GPS UART
+  GPSSerial.begin(9600, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
+  delay(200);
+
+  // Provide GPS serial to u-blox helper module and configure receiver output
+  UbloxHelper_begin(GPSSerial);
+
+  bool ok = UbloxHelper_configureUbxOnlyNavPvt();
+  if (!ok) {
+    Serial.println("⚠️ u-blox config: NAV-PVT enable did not ACK (continuing anyway).");
+  }
+
+  // LoRa init
   Serial.println("SX126x Sender starting...");
-  SPI.begin(5, 19, 27, 18); // SCK=5, MISO=19, MOSI=27, SS=18 (your wiring)
+  SPI.begin(5, 19, 27, 18);
 
   int state = radio.begin(LORA_FREQ);
   if (state != RADIOLIB_ERR_NONE) {
-    Serial.print("❌ radio.begin() failed, code = ");
+    Serial.print("radio.begin() failed, code = ");
     Serial.println(state);
-    while (true) delay(1000);
+    while (true) { delay(1000); }
   }
-
   Serial.println("✅ Radio init OK");
-}
-
-static void initGpsAndConfigureUblox() {
-  // Power GPS via AXP2101 (T-Beam Supreme / AXP2101 variants)
-  AXP2101_beginAndEnableGPSPower();
-
-  // Start GPS UART
-  GPSSerial.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
-  delay(200);
-
-  // Provide GPS serial to UbloxHelper (similar idea to the “hypothetical” usage:
-  // first begin/init, then configure)
-  UbloxHelper_begin(GPSSerial);
-
-  // Configure u-blox to output only UBX-NAV-PVT on UART1
-  bool ok = UbloxHelper_configureUbxOnlyNavPvt();
-  if (ok) {
-    Serial.println("✅ u-blox configured: UBX-NAV-PVT enabled, NMEA disabled (best-effort).");
-  } else {
-    Serial.println("⚠️ u-blox config: NAV-PVT enable did not ACK (continuing anyway).");
-  }
 
   // Tell SendOwnInfo which serial to parse UBX from
   SendOwnInfo_begin(GPSSerial);
 }
 
-void setup() {
-  Serial.begin(115200);
-  delay(300);
-
-  initGpsAndConfigureUblox();
-  initRadioOrHalt();
-
-  Serial.println("Sender ready.");
-}
-
 void loop() {
-  static bool txInProgress = false;
-
-  if (txInProgress) {
-    int st = radio.finishTransmit();
-    if (st == RADIOLIB_ERR_NONE) {
-      txInProgress = false;
-      Serial.println("✅ TX done");
-    }
-  }
-
-  if (!SendOwnInfo_pollNewNavPvt()) return;
-
-  if (txInProgress) {
-    Serial.println("⚠️ New NAV-PVT but TX busy -> skipping");
-    return;
-  }
-
-  int transmissionState = RADIOLIB_ERR_NONE;
-  bool transmitFlag = false;
-
+  // Parse GPS stream + send latest info via LoRa
   OwnInfo own = prepareAndSendOwnInfo(radio, transmissionState, transmitFlag);
 
-  Serial.print("TX start state=");
-  Serial.println(transmissionState);
-  Serial.print("TX started=");
-  Serial.println(transmitFlag ? "true" : "false");
+  lastProperFixValid = own.valid;
 
-  txInProgress = transmitFlag;
+  Serial.print(own.lat_proper, 6);
+  Serial.print(", ");
+  Serial.println(own.lon_proper, 6);
 
-  Serial.print("GPS: lat=");
-  Serial.print(own.lat_proper, 7);
-  Serial.print(" lon=");
-  Serial.print(own.lon_proper, 7);
-  Serial.print(" valid=");
-  Serial.print(own.valid ? "true" : "false");
-  Serial.print(" fixType=");
-  Serial.println(own.fixType);
+  // optional pacing
+  delay(600);
 }
 

@@ -1,11 +1,11 @@
 #include <Arduino.h>
 #include <RadioLib.h>
 #include <SPI.h>
-#include <SoftwareSerial.h>
 
 // --------------------
-// ⚠️  T- BEAM pins
+// ⚠️  LORA
 // --------------------
+
 static const int LORA_NSS  = 18;   // CS
 static const int LORA_DIO1 = 33;   // DIO1 (IRQ)
 static const int LORA_RST  = 23;   // RESET
@@ -26,14 +26,16 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
 
-  Serial.println("SX126x Receiver starting...");
+  Serial.println("SX126x Sender starting...");
   SPI.begin(5, 19, 27, 18);
+
   int state = radio.begin(LORA_FREQ);
   if (state != RADIOLIB_ERR_NONE) {
     Serial.print("radio.begin() failed, code = ");
     Serial.println(state);
     while (true) { delay(1000); }
   }
+  Serial.println("✅ Radio init OK");
 
   // Optional: must match sender if you changed them there
   // radio.setSpreadingFactor(7);
